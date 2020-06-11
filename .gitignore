@@ -1,0 +1,6 @@
+# Java stuff
+target
+
+# Jetbrains IDEs
+.idea
+*.iml
