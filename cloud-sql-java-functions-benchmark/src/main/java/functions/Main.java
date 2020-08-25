@@ -32,14 +32,17 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 public class Main implements HttpFunction {
 
   // TODO: replace these values before deploying
-  private static final String PROJECT_ID = "";
-  private static final String CONNECTION_NAME = "";
-  private static final String DB_NAME = "";
-  private static final String DB_USER = "";
-  private static final String DB_PASSWORD = "";
+  private static final String PROJECT_ID = System.getenv("PROJECT_ID");
+  private static final String CONNECTION_NAME = System.getenv("CLOUD_SQL_CONNECTION_NAME");
+  private static final String DB_NAME = System.getenv("DB_NAME");
+  private static final String DB_USER = System.getenv("DB_USER");
+  private static final String DB_PASSWORD = System.getenv("DB_PASS");
 
   private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
   private static final Tracer TRACER = Tracing.getTracer();
+
+  // Create thread pool
+  static ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
 
   static {
     try {
@@ -53,6 +56,11 @@ public class Main implements HttpFunction {
       LOGGER.log(Level.WARNING, "Warning: Could not set up Stackdriver Trace", e);
     }
 
+    // Trace every request
+    TraceConfig traceConfig = Tracing.getTraceConfig();
+    traceConfig.updateActiveTraceParams(
+        traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample()).build());
+
   }
 
   @Override
@@ -61,11 +69,7 @@ public class Main implements HttpFunction {
 
     Integer duration = Integer.parseInt(request.getFirstQueryParameter("duration").orElse("5000"));
     Integer interval = Integer.parseInt(request.getFirstQueryParameter("interval").orElse("500"));
-
-    // Trace every request
-    TraceConfig traceConfig = Tracing.getTraceConfig();
-    traceConfig.updateActiveTraceParams(
-        traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample()).build());
+    String connType = request.getFirstQueryParameter("conn_type").orElse("pool");
 
     // Set up URL parameters
     String jdbcURL = String.format("jdbc:postgresql:///%s", DB_NAME);
@@ -77,20 +81,26 @@ public class Main implements HttpFunction {
 
     LOGGER.log(Level.INFO, "Started logging.");
 
-    LOGGER.log(Level.INFO, "Started logging.");
-    // Create thread pool
-    ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
-
-    // Start tests for regular connections
-    execService.scheduleAtFixedRate(() -> {
-      connectRegular(jdbcURL, connProps);
-    }, 0, interval, TimeUnit.MILLISECONDS);
-
-    // Start tests for pooled connections
-    DataSource pool = createPool(jdbcURL, connProps);
-    execService.scheduleAtFixedRate(() -> {
-      connectWithPool(pool);
-    }, 0, interval, TimeUnit.MILLISECONDS);
+    switch (connType) {
+      case "pool":
+        // Start tests for pooled connections
+        DataSource pool = createPool(jdbcURL, connProps);
+        execService.scheduleAtFixedRate(() -> {
+          connectWithPool(pool);
+        }, 0, interval, TimeUnit.MILLISECONDS);
+        break;
+      case "regular":
+        // Start tests for regular connections
+        execService.scheduleAtFixedRate(() -> {
+          connectRegular(jdbcURL, connProps);
+        }, 0, interval, TimeUnit.MILLISECONDS);
+        break;
+      default:
+        response.setStatusCode(HttpURLConnection.HTTP_BAD_REQUEST);
+        BufferedWriter writer = response.getWriter();
+        writer.write("Valid options for conn_type are: pool, regular");
+        break;
+    }
 
     try {
       TimeUnit.MILLISECONDS.sleep(duration);
@@ -157,7 +167,7 @@ public class Main implements HttpFunction {
 
     config.setMaximumPoolSize(5);
     config.setMinimumIdle(5);
-    config.setConnectionTimeout(TimeUnit.MILLISECONDS.convert(10, TimeUnit.SECONDS)); // 10 seconds
+    config.setConnectionTimeout(TimeUnit.MILLISECONDS.convert(30, TimeUnit.SECONDS)); // 10 seconds
     config.setIdleTimeout(TimeUnit.MILLISECONDS.convert(10, TimeUnit.MINUTES)); // 10 minutes
     config.setMaxLifetime(TimeUnit.MILLISECONDS.convert(60, TimeUnit.MINUTES));
 
