@@ -1,6 +1,5 @@
 package functions;
 
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import com.google.cloud.functions.HttpFunction;
 import com.google.cloud.functions.HttpRequest;
 import com.google.cloud.functions.HttpResponse;
@@ -27,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.sql.DataSource;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 
 public class Main implements HttpFunction {
@@ -59,7 +59,8 @@ public class Main implements HttpFunction {
   public void service(HttpRequest request, HttpResponse response)
       throws IOException {
 
-    Integer seconds = Integer.parseInt(request.getFirstQueryParameter("seconds").orElse("5"));
+    Integer duration = Integer.parseInt(request.getFirstQueryParameter("duration").orElse("5000"));
+    Integer interval = Integer.parseInt(request.getFirstQueryParameter("interval").orElse("500"));
 
     // Trace every request
     TraceConfig traceConfig = Tracing.getTraceConfig();
@@ -83,16 +84,16 @@ public class Main implements HttpFunction {
     // Start tests for regular connections
     execService.scheduleAtFixedRate(() -> {
       connectRegular(jdbcURL, connProps);
-    }, 0, 500L, TimeUnit.MILLISECONDS);
+    }, 0, interval, TimeUnit.MILLISECONDS);
 
     // Start tests for pooled connections
     DataSource pool = createPool(jdbcURL, connProps);
     execService.scheduleAtFixedRate(() -> {
       connectWithPool(pool);
-    }, 0, 500L, TimeUnit.MILLISECONDS);
+    }, 0, interval, TimeUnit.MILLISECONDS);
 
     try {
-      TimeUnit.SECONDS.sleep(seconds);
+      TimeUnit.MILLISECONDS.sleep(duration);
     } catch (InterruptedException e) {
       response.setStatusCode(HttpURLConnection.HTTP_INTERNAL_ERROR);
       BufferedWriter writer = response.getWriter();
@@ -104,7 +105,7 @@ public class Main implements HttpFunction {
 
     BufferedWriter writer = response.getWriter();
     writer.write(
-        String.format("Logged connection attempts to Stackdriver Trace for %d seconds", seconds));
+        String.format("Logged connection attempts to Stackdriver Trace for %d ms", duration));
   }
 
   private static void connectRegular(String jdbcURL, Properties connProps) {
