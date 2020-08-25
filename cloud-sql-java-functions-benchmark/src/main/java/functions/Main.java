@@ -33,7 +33,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 
 public class Main implements HttpFunction {
 
-  // TODO: replace these values before deploying
   private static final String PROJECT_ID = System.getenv("PROJECT_ID");
   private static final String CONNECTION_NAME = System.getenv("CLOUD_SQL_CONNECTION_NAME");
   private static final String DB_NAME = System.getenv("DB_NAME");
