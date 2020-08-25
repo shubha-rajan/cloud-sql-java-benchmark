@@ -21,12 +21,12 @@ import java.net.HttpURLConnection;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.UUID;
 import javax.sql.DataSource;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -39,30 +39,37 @@ public class Main implements HttpFunction {
   private static final String DB_NAME = System.getenv("DB_NAME");
   private static final String DB_USER = System.getenv("DB_USER");
   private static final String DB_PASSWORD = System.getenv("DB_PASS");
-
   private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
-  private static final Tracer TRACER = Tracing.getTracer();
 
+  private static class LazyInitializer {
+    private static final Tracer TRACER = Tracing.getTracer();
+    static {
+      try {
+        // Set up StackDriver
+        StackdriverTraceExporter.createAndRegister(
+            StackdriverTraceConfiguration.builder()
+                .setProjectId(PROJECT_ID)
+                .build());
 
+      } catch (java.io.IOException e) {
+        Main.LOGGER.log(Level.WARNING, "Warning: Could not set up Stackdriver Trace", e);
+      }
 
-  static {
-    try {
-      // Set up StackDriver
-      StackdriverTraceExporter.createAndRegister(
-          StackdriverTraceConfiguration.builder()
-              .setProjectId(PROJECT_ID)
+      // Trace every request
+      TraceConfig traceConfig = Tracing.getTraceConfig();
+      traceConfig.updateActiveTraceParams(
+          traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample())
               .build());
-
-    } catch (java.io.IOException e) {
-      LOGGER.log(Level.WARNING, "Warning: Could not set up Stackdriver Trace", e);
     }
 
-    // Trace every request
-    TraceConfig traceConfig = Tracing.getTraceConfig();
-    traceConfig.updateActiveTraceParams(
-        traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample()).build());
+    private LazyInitializer() {
+    }
 
+    private static Tracer getTracer() {
+      return LazyInitializer.TRACER;
+    }
   }
+
 
   @Override
   public void service(HttpRequest request, HttpResponse response)
@@ -125,13 +132,14 @@ public class Main implements HttpFunction {
   }
 
   private static void connectRegular(String jdbcURL, Properties connProps, String requestId) {
-    try (Scope rootSpan = TRACER.spanBuilder("regular-connection").startScopedSpan()) {
-      Span span = TRACER.getCurrentSpan();
+    Tracer tracer = LazyInitializer.getTracer();
+    try (Scope rootSpan = tracer.spanBuilder("regular-connection").startScopedSpan()) {
+      Span span = tracer.getCurrentSpan();
       span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
       Connection conn;
 
       // Get connection
-      try (Scope getConnSpan = TRACER.spanBuilder("getConnection").startScopedSpan()) {
+      try (Scope getConnSpan = tracer.spanBuilder("getConnection").startScopedSpan()) {
         conn = DriverManager.getConnection(jdbcURL, connProps);
       } catch (Exception ex) {
         LOGGER.log(Level.WARNING, "[regular-connection] Error occurred during connection.", ex);
@@ -148,13 +156,14 @@ public class Main implements HttpFunction {
   }
 
   private static void connectWithPool(DataSource pool, String requestId) {
-    try (Scope rootSpan = TRACER.spanBuilder("pool-connection").startScopedSpan()) {
-      Span span = TRACER.getCurrentSpan();
+    Tracer tracer = LazyInitializer.getTracer();
+    try (Scope rootSpan = tracer.spanBuilder("pool-connection").startScopedSpan()) {
+      Span span = tracer.getCurrentSpan();
       span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
       Connection conn;
 
       // Get connection
-      try (Scope getConnSpan = TRACER.spanBuilder("getConnection").startScopedSpan()) {
+      try (Scope getConnSpan = tracer.spanBuilder("getConnection").startScopedSpan()) {
         conn = pool.getConnection();
       } catch (Exception ex) {
         LOGGER.log(Level.WARNING, "[pool-connection] Error occurred during connection.", ex);
@@ -186,7 +195,8 @@ public class Main implements HttpFunction {
 
   // Create a connection to the database
   private static void closeConnection(Connection conn) {
-    try (Scope closeConnSpan = TRACER.spanBuilder("closeConnection").startScopedSpan()) {
+    Tracer tracer = LazyInitializer.getTracer();
+    try (Scope closeConnSpan = tracer.spanBuilder("closeConnection").startScopedSpan()) {
       conn.close();
     } catch (Exception ex) {
       LOGGER.log(Level.WARNING, "Error occurred during connection close.", ex);
@@ -195,10 +205,11 @@ public class Main implements HttpFunction {
 
   // Execute a simple statement to verify the connection works.
   private static void executeStatement(Connection conn) {
-    try (Scope ss = TRACER.spanBuilder("executeStatement").startScopedSpan()) {
+    Tracer tracer = LazyInitializer.getTracer();
+    try (Scope ss = tracer.spanBuilder("executeStatement").startScopedSpan()) {
       conn.prepareStatement("SELECT true;").execute();
     } catch (Exception ex) {
-      Span span = TRACER.getCurrentSpan();
+      Span span = tracer.getCurrentSpan();
       span.setStatus(Status.INTERNAL.withDescription(ex.toString()));
     }
   }
