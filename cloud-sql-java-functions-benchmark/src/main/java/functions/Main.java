@@ -25,6 +25,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -41,8 +42,7 @@ public class Main implements HttpFunction {
   private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
   private static final Tracer TRACER = Tracing.getTracer();
 
-  // Create thread pool
-  static ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
+
 
   static {
     try {
@@ -80,6 +80,9 @@ public class Main implements HttpFunction {
     connProps.setProperty("cloudSqlInstance", CONNECTION_NAME);
 
     LOGGER.log(Level.INFO, "Started logging.");
+
+    // Create thread pool
+    ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
 
     switch (connType) {
       case "pool":
