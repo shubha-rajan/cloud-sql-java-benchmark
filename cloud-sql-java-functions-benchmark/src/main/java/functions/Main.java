@@ -8,6 +8,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.opencensus.common.Scope;
 import io.opencensus.exporter.trace.stackdriver.StackdriverTraceConfiguration;
 import io.opencensus.exporter.trace.stackdriver.StackdriverTraceExporter;
+import io.opencensus.trace.AttributeValue;
 import io.opencensus.trace.Span;
 import io.opencensus.trace.Status;
 import io.opencensus.trace.Tracer;
@@ -71,6 +72,8 @@ public class Main implements HttpFunction {
     Integer interval = Integer.parseInt(request.getFirstQueryParameter("interval").orElse("500"));
     String connType = request.getFirstQueryParameter("conn_type").orElse("pool");
 
+    String requestId = UUID.randomUUID().toString();
+
     // Set up URL parameters
     String jdbcURL = String.format("jdbc:postgresql:///%s", DB_NAME);
     Properties connProps = new Properties();
@@ -89,13 +92,13 @@ public class Main implements HttpFunction {
         // Start tests for pooled connections
         DataSource pool = createPool(jdbcURL, connProps);
         execService.scheduleAtFixedRate(() -> {
-          connectWithPool(pool);
+          connectWithPool(pool, requestId);
         }, 0, interval, TimeUnit.MILLISECONDS);
         break;
       case "regular":
         // Start tests for regular connections
         execService.scheduleAtFixedRate(() -> {
-          connectRegular(jdbcURL, connProps);
+          connectRegular(jdbcURL, connProps, requestId);
         }, 0, interval, TimeUnit.MILLISECONDS);
         break;
       default:
@@ -121,8 +124,10 @@ public class Main implements HttpFunction {
         String.format("Logged connection attempts to Stackdriver Trace for %d ms", duration));
   }
 
-  private static void connectRegular(String jdbcURL, Properties connProps) {
+  private static void connectRegular(String jdbcURL, Properties connProps, String requestId) {
     try (Scope rootSpan = TRACER.spanBuilder("regular-connection").startScopedSpan()) {
+      Span span = TRACER.getCurrentSpan();
+      span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
       Connection conn;
 
       // Get connection
@@ -142,8 +147,10 @@ public class Main implements HttpFunction {
     LOGGER.log(Level.INFO, "[regular-connection] complete.");
   }
 
-  private static void connectWithPool(DataSource pool) {
+  private static void connectWithPool(DataSource pool, String requestId) {
     try (Scope rootSpan = TRACER.spanBuilder("pool-connection").startScopedSpan()) {
+      Span span = TRACER.getCurrentSpan();
+      span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
       Connection conn;
 
       // Get connection
