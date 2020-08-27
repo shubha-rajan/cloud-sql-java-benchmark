@@ -126,10 +126,10 @@ public class Main implements HttpFunction {
       BufferedWriter writer = response.getWriter();
       writer.write(ExceptionUtils.getStackTrace(e));
       return;
+    } finally {
+      task.cancel(true);
     }
-
-    task.cancel(true);
-
+    
     BufferedWriter writer = response.getWriter();
     writer.write(
         String.format("Logged connection attempts to Stackdriver Trace for %d ms", duration));
