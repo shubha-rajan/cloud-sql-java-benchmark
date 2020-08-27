@@ -24,6 +24,7 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -40,9 +41,19 @@ public class Main implements HttpFunction {
   private static final String DB_PASSWORD = System.getenv("DB_PASS");
   private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
 
-  private static class LazyInitializer {
-    private static final Tracer TRACER = Tracing.getTracer();
-    static {
+  // Create thread pool
+  private static ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
+
+  private static class SingletonTracer {
+
+    private static final Tracer TRACER = InitTracer();
+
+    private SingletonTracer() {
+    }
+
+    private static Tracer InitTracer() {
+      Tracer tracer = Tracing.getTracer();
+
       try {
         // Set up StackDriver
         StackdriverTraceExporter.createAndRegister(
@@ -51,7 +62,7 @@ public class Main implements HttpFunction {
                 .build());
 
       } catch (java.io.IOException e) {
-        Main.LOGGER.log(Level.WARNING, "Warning: Could not set up Stackdriver Trace", e);
+        LOGGER.log(Level.WARNING, "Warning: Could not set up Stackdriver Trace", e);
       }
 
       // Trace every request
@@ -59,13 +70,13 @@ public class Main implements HttpFunction {
       traceConfig.updateActiveTraceParams(
           traceConfig.getActiveTraceParams().toBuilder().setSampler(Samplers.alwaysSample())
               .build());
+
+      return tracer;
     }
 
-    private LazyInitializer() {
-    }
 
     private static Tracer getTracer() {
-      return LazyInitializer.TRACER;
+      return SingletonTracer.TRACER;
     }
   }
 
@@ -90,29 +101,23 @@ public class Main implements HttpFunction {
 
     LOGGER.log(Level.INFO, "Started logging.");
 
-    // Create thread pool
-    ScheduledExecutorService execService = Executors.newScheduledThreadPool(2);
-
+    Runnable connectFunc;
     switch (connType) {
       case "pool":
-        // Start tests for pooled connections
-        DataSource pool = createPool(jdbcURL, connProps);
-        execService.scheduleAtFixedRate(() -> {
-          connectWithPool(pool, requestId);
-        }, 0, interval, TimeUnit.MILLISECONDS);
+        connectFunc = () -> connectWithPool(createPool(jdbcURL, connProps), requestId);
         break;
       case "regular":
-        // Start tests for regular connections
-        execService.scheduleAtFixedRate(() -> {
-          connectRegular(jdbcURL, connProps, requestId);
-        }, 0, interval, TimeUnit.MILLISECONDS);
+        connectFunc = () -> connectRegular(jdbcURL, connProps, requestId);
         break;
       default:
         response.setStatusCode(HttpURLConnection.HTTP_BAD_REQUEST);
         BufferedWriter writer = response.getWriter();
         writer.write("Valid options for conn_type are: pool, regular");
-        break;
+        return;
     }
+
+    ScheduledFuture<?> task = execService
+        .scheduleAtFixedRate(connectFunc, 0, interval, TimeUnit.MILLISECONDS);
 
     try {
       TimeUnit.MILLISECONDS.sleep(duration);
@@ -123,7 +128,7 @@ public class Main implements HttpFunction {
       return;
     }
 
-    execService.shutdown();
+    task.cancel(true);
 
     BufferedWriter writer = response.getWriter();
     writer.write(
@@ -131,7 +136,7 @@ public class Main implements HttpFunction {
   }
 
   private static void connectRegular(String jdbcURL, Properties connProps, String requestId) {
-    Tracer tracer = LazyInitializer.getTracer();
+    Tracer tracer = SingletonTracer.getTracer();
     try (Scope rootSpan = tracer.spanBuilder("regular-connection").startScopedSpan()) {
       Span span = tracer.getCurrentSpan();
       span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
@@ -155,7 +160,7 @@ public class Main implements HttpFunction {
   }
 
   private static void connectWithPool(DataSource pool, String requestId) {
-    Tracer tracer = LazyInitializer.getTracer();
+    Tracer tracer = SingletonTracer.getTracer();
     try (Scope rootSpan = tracer.spanBuilder("pool-connection").startScopedSpan()) {
       Span span = tracer.getCurrentSpan();
       span.putAttribute("requestId", AttributeValue.stringAttributeValue(requestId));
@@ -194,7 +199,7 @@ public class Main implements HttpFunction {
 
   // Create a connection to the database
   private static void closeConnection(Connection conn) {
-    Tracer tracer = LazyInitializer.getTracer();
+    Tracer tracer = SingletonTracer.getTracer();
     try (Scope closeConnSpan = tracer.spanBuilder("closeConnection").startScopedSpan()) {
       conn.close();
     } catch (Exception ex) {
@@ -204,7 +209,7 @@ public class Main implements HttpFunction {
 
   // Execute a simple statement to verify the connection works.
   private static void executeStatement(Connection conn) {
-    Tracer tracer = LazyInitializer.getTracer();
+    Tracer tracer = SingletonTracer.getTracer();
     try (Scope ss = tracer.spanBuilder("executeStatement").startScopedSpan()) {
       conn.prepareStatement("SELECT true;").execute();
     } catch (Exception ex) {
