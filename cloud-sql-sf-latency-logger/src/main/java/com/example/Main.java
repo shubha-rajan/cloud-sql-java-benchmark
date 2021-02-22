@@ -39,11 +39,11 @@ import javax.sql.DataSource;
 
 public class Main {
 
-  private static final String PROJECT_ID = "";
-  private static final String CONNECTION_NAME = "";
-  private static final String DB_NAME = "";
-  private static final String DB_USER = "";
-  private static final String DB_PASSWORD = "";
+  private static final String PROJECT_ID = System.getenv("PROJECT_ID");
+  private static final String CONNECTION_NAME = System.getenv("CLOUD_SQL_CONNECTION_NAME");
+  private static final String DB_NAME = System.getenv("DB_NAME");
+  private static final String DB_USER = System.getenv("DB_USER");
+  private static final String DB_PASSWORD = System.getenv("DB_PASS");
 
   private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
   private static final Tracer TRACER = Tracing.getTracer();
